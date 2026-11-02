@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Tag de versión (ej: v1.0.0)'
+        description: 'Tag de versión (ej: v1.0.1)'
         required: false
         default: ''
 
@@ -28,18 +28,22 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up JDK 17
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
+          java-version: '21'
           distribution: 'temurin'
+
+      - name: Setup Android SDK Licenses
+        run: |
+          yes | sdkmanager --licenses || true
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
       - name: Prepare Environment and Signing Keystores
         run: |
-          # 1. Crear archivo .env desde .env.example para que el plugin de secretos no falle
+          # 1. Crear archivo .env desde .env.example
           if [ -f .env.example ]; then
             cp .env.example .env
           else
@@ -51,7 +55,7 @@ jobs:
             base64 -d debug.keystore.base64 > debug.keystore
           fi
           
-          # 3. Generar upload keystore no interactivo con alias 'upload' y clave 'android'
+          # 3. Generar upload keystore no interactivo para el build release
           keytool -genkeypair -v \
             -keystore my-upload-key.jks \
             -alias upload \
@@ -71,29 +75,28 @@ jobs:
           KEY_PASSWORD: android
           KEYSTORE_PATH: ${{ github.workspace }}/my-upload-key.jks
         run: |
-          # Compilar APK Debug (garantizado de funcionar en cualquier teléfono Android)
-          ./gradlew assembleDebug --stacktrace -x lint -x test
+          # 1. Compilar APK Debug (100% garantizado para cualquier celular Android)
+          ./gradlew assembleDebug --no-daemon --stacktrace
           
-          # Compilar APK Release omitiendo verificaciones lentas de lint
-          ./gradlew assembleRelease --stacktrace -x lint -x test || echo "Continuando con los APKs generados..."
+          # 2. Compilar APK Release
+          ./gradlew assembleRelease --no-daemon --stacktrace || echo "Continuando con APKs generados..."
 
       - name: Prepare Release APK Files
         run: |
           mkdir -p release-assets
           
-          # Copiar todos los APKs generados con nombres claros
-          if [ -f app/build/outputs/apk/release/app-release.apk ]; then
-            cp app/build/outputs/apk/release/app-release.apk release-assets/SparkVisionStock-release.apk
-          fi
-          
           if [ -f app/build/outputs/apk/debug/app-debug.apk ]; then
-            cp app/build/outputs/apk/debug/app-debug.apk release-assets/SparkVisionStock-debug.apk
+            cp -v app/build/outputs/apk/debug/app-debug.apk release-assets/SparkVisionStock-debug.apk
           fi
           
-          # Si tienen otro nombre, copiarlos también
-          find app/build/outputs/apk -name "*.apk" -exec cp -n {} release-assets/ \;
+          if [ -f app/build/outputs/apk/release/app-release.apk ]; then
+            cp -v app/build/outputs/apk/release/app-release.apk release-assets/SparkVisionStock-release.apk
+          fi
           
-          echo "Archivos listos para publicar:"
+          # Copiar cualquier otro APK generado
+          find app/build/outputs/apk -type f -name "*.apk" -exec cp -nv {} release-assets/ \;
+          
+          echo "Contenido de release-assets:"
           ls -lh release-assets/
 
       - name: Determine Release Tag
@@ -115,14 +118,14 @@ jobs:
           tag_name: ${{ steps.tag_info.outputs.TAG_NAME }}
           name: "SparkVision Stock ${{ steps.tag_info.outputs.TAG_NAME }}"
           body: |
-            ## 📱 SparkVision Stock — APK Listo para Instalar
-            Calculadora visual y escáner de productos para tiendas.
+            ## 📱 SparkVision Stock — APK Oficial
+            Calculadora visual y escáner de productos para tiendas de barrio.
             
             ### 📥 Descargas:
-            - **`SparkVisionStock-debug.apk`**: Compatible con cualquier celular Android (Recomendado para pruebas inmediatas).
+            - **`SparkVisionStock-debug.apk`**: Compatible con cualquier teléfono Android. Instálalo directamente en tu celular.
             - **`SparkVisionStock-release.apk`**: Versión optimizada de producción.
             
-            *(Sin consumo de cuotas de artefactos de GitHub Actions)*.
+            *(Publicado en GitHub Releases - Sin límites de cuota)*.
           files: release-assets/*.apk
           draft: false
           prerelease: false
